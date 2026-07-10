@@ -11,8 +11,12 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
-  flutter_nfc_kit: ^3.4.0
-  ndef: ^0.3.1
+  # Library komunitas untuk baca saldo + history kartu e-money/e-toll Indonesia
+  # (Mandiri e-Money, BNI TapCash, BCA Flazz, DKI). History transaksi: Mandiri & BNI.
+  prepaid_lib_flutter_null_safety: ^1.0.1
+  shared_preferences: ^2.5.5
+  share_plus: ^13.2.0
+  flutter_nfc_kit: ^3.6.2
 
 dev_dependencies:
   flutter_test:

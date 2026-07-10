@@ -1,5 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.NFC" />
+    <!-- Library prepaid_lib memvalidasi MID via API saat initUnikLib(),
+         jadi INTERNET wajib (debug manifest sudah punya; ini untuk release). -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:name="android.hardware.nfc" android:required="true" />
 
     <application
