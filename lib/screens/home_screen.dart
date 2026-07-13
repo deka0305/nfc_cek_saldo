@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show HapticFeedback;
 import '../models/nfc_card.dart';
 import '../services/nfc_service.dart';
 import '../services/card_storage.dart';
@@ -18,6 +19,7 @@ class _HomeScreenState extends State<HomeScreen>
   bool _isScanning = false;
   bool _nfcAvailable = false;
   bool _autoScan = true; // mode tempel-langsung-baca
+  bool _manualActive = false; // sesi scan manual sedang berjalan (mode auto off)
   bool _loopRunning = false; // penanda loop persisten sedang berjalan
   bool _sheetOpen = false; // jeda scan saat hasil sedang ditampilkan
   bool _appActive = true; // false saat app di background
@@ -41,10 +43,11 @@ class _HomeScreenState extends State<HomeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Loop tetap hidup; cukup tandai aktif/tidak. Saat background, putus poll
-    // yang sedang berjalan agar loop segera idle.
+    // Cukup tandai aktif/tidak — jangan panggil finish() (bisa menggantungkan
+    // poll yang sedang berjalan). Poll pendek akan selesai sendiri lalu loop
+    // idle saat background, dan lanjut saat kembali.
     _appActive = state == AppLifecycleState.resumed;
-    if (!_appActive) NfcService.stopScan();
+    if (_appActive) _scanLoop(); // pastikan loop hidup saat kembali ke depan
   }
 
   Future<void> _loadHistory() async {
@@ -74,7 +77,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (_loopRunning) return;
     _loopRunning = true;
     while (mounted) {
-      if (!_autoScan || !_nfcAvailable || !_appActive || _sheetOpen) {
+      // Loop mem-poll bila mode auto ON, ATAU ada sesi scan manual aktif.
+      final wantScan = _autoScan || _manualActive;
+      if (!wantScan || !_nfcAvailable || !_appActive || _sheetOpen) {
         await Future.delayed(Duration(milliseconds: 250));
         continue;
       }
@@ -86,11 +91,14 @@ class _HomeScreenState extends State<HomeScreen>
       }
       try {
         final card = await NfcService.readCard();
+        HapticFeedback.mediumImpact(); // getar tanda berhasil
         final saved = await CardStorage.add(card);
         if (!mounted) break;
         setState(() {
           _history = saved;
           _statusText = 'Kartu berhasil dibaca!';
+          _manualActive = false; // sesi manual selesai setelah 1 bacaan sukses
+          if (!_autoScan) _isScanning = false;
         });
         await _showResult(card); // tunggu sheet ditutup sebelum scan lagi
       } catch (e) {
@@ -109,7 +117,7 @@ class _HomeScreenState extends State<HomeScreen>
     _loopRunning = false;
   }
 
-  Future<void> _toggleAutoScan(bool value) async {
+  void _toggleAutoScan(bool value) {
     setState(() {
       _autoScan = value;
       _isScanning = false;
@@ -117,50 +125,32 @@ class _HomeScreenState extends State<HomeScreen>
           ? 'Siap — tempelkan kartu ke belakang HP'
           : 'Tekan tombol untuk scan';
     });
-    // Putus poll yang mungkin sedang berjalan agar loop segera merespons
-    // perubahan mode (baik saat dimatikan maupun dinyalakan lagi).
-    await NfcService.stopScan();
+    // PENTING: JANGAN panggil finish()/stopScan() di sini. Bila dipanggil saat
+    // loop sedang menunggu poll, poll bisa "mati tanpa selesai" di Android →
+    // await readCard() menggantung selamanya → toggle ON tak bisa menembusnya.
+    // Cukup ubah flag; poll pendek (≤3 dtk) akan selesai sendiri lalu loop
+    // menyesuaikan (idle saat off, lanjut saat on).
+    if (value) _scanLoop(); // hidupkan ulang loop bila sempat berhenti
   }
 
-  /// Scan manual sekali (dipakai saat mode auto dimatikan).
-  Future<void> _startScan() async {
+  /// Mulai sesi scan manual (mode auto off). Cukup nyalakan flag; loop robust
+  /// yang menangani poll pendek berulang — TIDAK ada finish() yang bisa
+  /// menggantungkan poll seperti sebelumnya.
+  void _startScan() {
     if (_isScanning || !_nfcAvailable || _autoScan) return;
     setState(() {
+      _manualActive = true;
       _isScanning = true;
       _statusText = 'Tempel kartu ke belakang HP...';
     });
-
-    try {
-      // Manual: beri waktu lebih lama untuk menempelkan kartu.
-      final card =
-          await NfcService.readCard(pollTimeout: const Duration(seconds: 20));
-      final saved = await CardStorage.add(card); // simpan permanen
-      if (!mounted) return;
-      setState(() {
-        _history = saved;
-        _isScanning = false;
-        _statusText = 'Kartu berhasil dibaca!';
-      });
-      _showResult(card);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isScanning = false;
-        final raw = e.toString().replaceFirst('Exception: ', '');
-        final msg = raw.toLowerCase();
-        _statusText = (msg.contains('dibatalkan') || msg.contains('cancel'))
-            ? 'Scan dibatalkan'
-            : (msg.contains('timeout') || msg.contains('habis'))
-                ? 'Waktu habis — coba lagi'
-                : 'Gagal: $raw';
-      });
-    }
+    _scanLoop(); // pastikan loop hidup untuk memproses sesi manual
   }
 
-  Future<void> _cancelScan() async {
-    await NfcService.stopScan();
-    if (!mounted) return;
+  void _cancelScan() {
+    // Cukup matikan flag; loop akan idle setelah poll pendek selesai.
+    // Tidak memanggil finish() agar poll tidak menggantung.
     setState(() {
+      _manualActive = false;
       _isScanning = false;
       _statusText = 'Scan dibatalkan';
     });

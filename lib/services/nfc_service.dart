@@ -75,6 +75,14 @@ class NfcService {
       tag = await FlutterNfcKit.poll(
         timeout: pollTimeout,
         iosAlertMessage: 'Tempelkan kartu ke iPhone',
+        // Optimasi: semua e-money Indonesia = ISO14443 Type A (IsoDep).
+        // Matikan tipe lain + lewati pengecekan NDEF agar koneksi ke kartu
+        // lebih cepat & andal (e-money bukan tag NDEF).
+        readIso14443A: true,
+        readIso14443B: false,
+        readIso15693: false,
+        readIso18092: false,
+        androidCheckNDEF: false,
       );
     } catch (e) {
       await _finishQuietly();
